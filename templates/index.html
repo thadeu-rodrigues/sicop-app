@@ -10,8 +10,11 @@
         .header { background: #2c3e50; color: white; padding: 25px 0; margin-bottom: 30px; }
         .result-card { border-left: 5px solid #3498db; transition: 0.2s; }
         .result-card:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
+        .pregao-card { cursor: pointer; border-left: 5px solid #27ae60; transition: 0.2s; }
+        .pregao-card:hover { transform: scale(1.02); background-color: #e8f5e9; }
         .highlight { background-color: #f1c40f; padding: 0 3px; font-weight: bold; }
         textarea { font-size: 11px; font-family: monospace; }
+        .btn-limpar:hover { background-color: #e9ecef; color: #dc3545; }
     </style>
 </head>
 <body>
@@ -22,42 +25,84 @@
 </div>
 
 <div class="container">
+    
     <ul class="nav nav-pills justify-content-center mb-4" id="myTab" role="tablist">
-        <li class="nav-item">
-            <button class="nav-link active px-4" data-bs-toggle="tab" data-bs-target="#busca">🔍 BUSCAR ITEM</button>
-        </li>
-        <li class="nav-item">
-            <button class="nav-link px-4" data-bs-toggle="tab" data-bs-target="#cadastro">📥 IMPORTAR HTML</button>
-        </li>
+        <li class="nav-item"><button class="nav-link active px-4" data-bs-toggle="tab" data-bs-target="#busca">🔍 BUSCAR</button></li>
+        <li class="nav-item"><button class="nav-link px-4" data-bs-toggle="tab" data-bs-target="#listar" onclick="carregarLista()">📋 LISTAR PREGÕES</button></li>
+        <li class="nav-item"><button class="nav-link px-4" data-bs-toggle="tab" data-bs-target="#cadastro">📥 IMPORTAR</button></li>
+        <li class="nav-item"><button class="nav-link px-4 text-danger" data-bs-toggle="tab" data-bs-target="#excluir">🗑️ EXCLUIR</button></li>
     </ul>
 
     <div class="tab-content">
+        
         <div class="tab-pane fade show active" id="busca">
             <div class="row justify-content-center mb-4">
                 <div class="col-md-8">
                     <div class="input-group input-group-lg">
-                        <input type="text" id="inputBusca" class="form-control" placeholder="Digite o material (ex: Piso, Cadeira)..." onkeyup="if(event.key==='Enter') buscar()">
+                        <input type="text" id="inputBusca" class="form-control" placeholder="Digite o material..." onkeyup="if(event.key==='Enter') buscar()">
                         <button class="btn btn-primary" onclick="buscar()">Pesquisar</button>
+                        <button class="btn btn-limpar bg-white" onclick="limparTela()" title="Limpar">🧹</button>
                     </div>
                 </div>
             </div>
             <div id="resultados" class="row justify-content-center g-3"></div>
         </div>
 
+        <div class="tab-pane fade" id="listar">
+            <div id="listaPregoesArea" class="row justify-content-center g-3">
+                <p class="text-center text-muted">Carregando lista...</p>
+            </div>
+        </div>
+
         <div class="tab-pane fade" id="cadastro">
             <div class="card shadow-sm p-4 mx-auto" style="max-width: 800px;">
-                <h5 class="mb-3">Importar Dados do Comprasnet</h5>
+                <h5 class="mb-3">Importar Pregão</h5>
                 <div class="row g-2 mb-3">
                     <div class="col-md-8">
                         <input type="text" id="impNumero" class="form-control" placeholder="Nº do Pregão (Ex: 90031/2025)">
                     </div>
                     <div class="col-md-4">
-                        <input type="text" id="impUasg" class="form-control" placeholder="UASG (Opcional)">
+                        <input type="text" id="impUasg" class="form-control" placeholder="UASG (Ex: 160518)">
                     </div>
                 </div>
-                <textarea id="impHtml" class="form-control mb-3" rows="8" placeholder="Cole o código-fonte (HTML) da página aqui..."></textarea>
+                
+                <div class="mb-3">
+                    <label class="form-label small fw-bold text-primary">Opção A: Importar via Link (Automático)</label>
+                    <input type="text" id="impUrl" class="form-control form-control-sm" placeholder="Cole o link do Comprasnet aqui...">
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label small fw-bold text-secondary">Opção B: Importar via HTML (Manual)</label>
+                    <textarea id="impHtml" class="form-control" rows="5" placeholder="Ou cole o código-fonte aqui..."></textarea>
+                </div>
+
                 <button class="btn btn-success w-100" onclick="importar()">Processar e Salvar</button>
                 <div id="msgImport" class="mt-2 text-center fw-bold"></div>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="excluir">
+            <div class="card shadow-sm p-4 mx-auto border-danger" style="max-width: 600px;">
+                <h5 class="text-danger mb-3">Excluir Pregão</h5>
+                <div class="input-group mb-3">
+                    <input type="text" id="delNumero" class="form-control" placeholder="Nº do Pregão (Ex: 90031/2025)">
+                    <button class="btn btn-danger" onclick="excluir()">Excluir</button>
+                </div>
+                <div id="msgExcluir" class="mt-2 text-center fw-bold"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="modalDetalhes" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title" id="modalTitulo">Itens do Pregão</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="modalConteudo" class="list-group"></div>
             </div>
         </div>
     </div>
@@ -65,28 +110,65 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-    function importar() {
-        const btn = document.querySelector('.btn-success');
-        const msg = document.getElementById('msgImport');
-        const dados = {
-            numero_pregao: document.getElementById('impNumero').value,
-            uasg: document.getElementById('impUasg').value,
-            html: document.getElementById('impHtml').value
-        };
-
-        if (!dados.html || !dados.numero_pregao) return alert("Preencha o Nº do Pregão e o HTML.");
-
-        btn.disabled = true; btn.innerText = "Processando..."; msg.innerText = "";
-        fetch('/api/importar', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(dados)
-        }).then(r => r.json()).then(d => {
-            btn.disabled = false; btn.innerText = "Processar e Salvar";
-            msg.innerText = d.msg;
-            msg.className = d.sucesso ? "mt-2 text-center text-success" : "mt-2 text-center text-danger";
-            if(d.sucesso) document.getElementById('impHtml').value = '';
+    // --- LISTAR PREGÕES ---
+    function carregarLista() {
+        const area = document.getElementById('listaPregoesArea');
+        area.innerHTML = '<div class="text-center"><div class="spinner-border text-primary"></div></div>';
+        
+        fetch('/api/listar')
+        .then(r => r.json())
+        .then(data => {
+            area.innerHTML = '';
+            if(data.length === 0) return area.innerHTML = '<div class="alert alert-info text-center">Nenhum pregão cadastrado.</div>';
+            
+            data.forEach(p => {
+                area.innerHTML += `
+                <div class="col-md-5">
+                    <div class="card pregao-card h-100 p-3 shadow-sm" onclick="verItens('${p.numero}')">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="text-success mb-0 fw-bold">📄 ${p.numero}</h5>
+                            <span class="badge bg-secondary">${p.qtd_itens} Itens</span>
+                        </div>
+                        <div class="text-muted small mt-2">
+                            UASG: ${p.uasg || 'N/A'} <br> Importado em: ${p.data}
+                        </div>
+                        <small class="text-primary mt-2 text-end d-block">Clique para ver itens &rarr;</small>
+                    </div>
+                </div>`;
+            });
         });
+    }
+
+    // --- VER ITENS NO MODAL ---
+    function verItens(numero) {
+        const modal = new bootstrap.Modal(document.getElementById('modalDetalhes'));
+        document.getElementById('modalTitulo').innerText = `Itens do Pregão ${numero}`;
+        const corpo = document.getElementById('modalConteudo');
+        corpo.innerHTML = '<p class="text-center">Carregando...</p>';
+        modal.show();
+
+        fetch(`/api/detalhes?numero=${encodeURIComponent(numero)}`)
+        .then(r => r.json())
+        .then(data => {
+            corpo.innerHTML = '';
+            data.forEach(i => {
+                corpo.innerHTML += `
+                <div class="list-group-item list-group-item-action">
+                    <div class="d-flex w-100 justify-content-between">
+                        <h6 class="mb-1 fw-bold">Item ${i.item_num}</h6>
+                        <small>${i.unidade} (${i.quantidade || '-'})</small>
+                    </div>
+                    <p class="mb-1 small">${i.descricao}</p>
+                </div>`;
+            });
+        });
+    }
+
+    // --- OUTRAS FUNÇÕES ---
+    function limparTela() {
+        document.getElementById('inputBusca').value = '';
+        document.getElementById('resultados').innerHTML = '';
+        document.getElementById('inputBusca').focus();
     }
 
     function buscar() {
@@ -112,6 +194,44 @@
                     </div>
                 </div>`;
             });
+        });
+    }
+
+    function importar() {
+        const btn = document.querySelector('#cadastro .btn-success');
+        const msg = document.getElementById('msgImport');
+        const dados = {
+            numero_pregao: document.getElementById('impNumero').value,
+            uasg: document.getElementById('impUasg').value,
+            url: document.getElementById('impUrl').value,
+            html: document.getElementById('impHtml').value
+        };
+
+        if (!dados.numero_pregao) return alert("Preencha o Nº do Pregão.");
+        if (!dados.url && !dados.html) return alert("Preencha a URL ou cole o HTML.");
+
+        btn.disabled = true; btn.innerText = "Processando..."; msg.innerText = "";
+        fetch('/api/importar', {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(dados)
+        }).then(r => r.json()).then(d => {
+            btn.disabled = false; btn.innerText = "Processar e Salvar";
+            msg.innerText = d.msg;
+            msg.className = d.sucesso ? "mt-2 text-center text-success" : "mt-2 text-center text-danger";
+            if(d.sucesso) { document.getElementById('impHtml').value = ''; document.getElementById('impUrl').value = ''; }
+        });
+    }
+
+    function excluir() {
+        const num = document.getElementById('delNumero').value;
+        const msg = document.getElementById('msgExcluir');
+        if (!num) return alert('Digite o número do pregão');
+        if (!confirm(`Tem certeza que deseja APAGAR o pregão ${num} e todos os seus itens?`)) return;
+
+        fetch('/api/excluir', {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({numero_pregao: num})
+        }).then(r => r.json()).then(d => {
+            msg.innerText = d.msg;
+            msg.className = d.sucesso ? "mt-2 text-center text-success" : "mt-2 text-center text-danger";
         });
     }
 </script>

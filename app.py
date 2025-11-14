@@ -1,16 +1,18 @@
 import os
+import requests
+import urllib3
 from flask import Flask, render_template, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from bs4 import BeautifulSoup
 from datetime import datetime
 
+# Desabilita avisos de SSL inseguro
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 app = Flask(__name__)
 
-# --- CONFIGURAÇÃO DO BANCO DE DADOS (Híbrida) ---
-# Tenta pegar a URL do banco do Render. Se não achar, cria um arquivo local.
+# --- CONFIGURAÇÃO DO BANCO ---
 database_url = os.getenv('DATABASE_URL', 'sqlite:///sicop.db')
-
-# Correção para compatibilidade do Render com SQLAlchemy
 if database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 
@@ -19,7 +21,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-# --- MODELOS (Tabelas) ---
+# --- MODELOS ---
 class Pregao(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     numero = db.Column(db.String(50), unique=True, nullable=False)
@@ -35,11 +37,11 @@ class Item(db.Model):
     quantidade = db.Column(db.String(20))
     pregao_id = db.Column(db.Integer, db.ForeignKey('pregao.id'), nullable=False)
 
-# Cria as tabelas se não existirem
 with app.app_context():
     db.create_all()
 
 # --- ROTAS ---
+
 @app.route('/')
 def home():
     return render_template('index.html')
@@ -47,28 +49,35 @@ def home():
 @app.route('/api/importar', methods=['POST'])
 def importar():
     data = request.get_json()
-    html_content = data.get('html')
     numero_pregao = data.get('numero_pregao', '').strip()
     uasg = data.get('uasg', '').strip()
+    url_alvo = data.get('url', '').strip()
+    html_content = data.get('html', '')
 
-    if not html_content or not numero_pregao:
-        return jsonify({"sucesso": False, "msg": "Dados incompletos."})
+    if not numero_pregao:
+        return jsonify({"sucesso": False, "msg": "O número do pregão é obrigatório."})
+
+    if url_alvo:
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0 Chrome/120.0.0.0 Safari/537.36'}
+            response = requests.get(url_alvo, headers=headers, verify=False, timeout=15)
+            response.raise_for_status()
+            html_content = response.text
+        except Exception as e:
+            return jsonify({"sucesso": False, "msg": f"Erro na URL: {str(e)}. Use o HTML manual."})
+
+    if not html_content:
+        return jsonify({"sucesso": False, "msg": "HTML/URL vazios."})
 
     try:
-        # Atualização: Remove pregão antigo se existir
         pregao_existente = Pregao.query.filter_by(numero=numero_pregao).first()
         if pregao_existente:
             db.session.delete(pregao_existente)
             db.session.commit()
 
-        novo_pregao = Pregao(
-            numero=numero_pregao,
-            uasg=uasg,
-            data_importacao=datetime.now().strftime("%d/%m/%Y")
-        )
+        novo_pregao = Pregao(numero=numero_pregao, uasg=uasg, data_importacao=datetime.now().strftime("%d/%m/%Y"))
         db.session.add(novo_pregao)
 
-        # Scraping do HTML
         soup = BeautifulSoup(html_content, 'html.parser')
         count = 0
         
@@ -76,63 +85,80 @@ def importar():
             for linha in tabela.find_all('tr'):
                 cols = linha.find_all('td')
                 if len(cols) < 2: continue
-                
                 textos = [c.get_text(strip=True) for c in cols]
-                
-                # Lógica para encontrar a descrição
                 descricao = max(textos, key=len)
                 if len(descricao) < 4: continue
-
-                # Tenta achar o número do item
+                
                 num_item = "N/A"
                 for t in textos[:3]:
-                    if t.isdigit(): 
-                        num_item = t
-                        break
+                    if t.isdigit(): num_item = t; break
                 
-                # Tenta achar unidade e qtd
-                unid = "N/A"
-                qtd = "N/A"
+                unid = "N/A"; qtd = "N/A"
                 for t in textos:
                     if t.upper() in ['UN', 'CX', 'KG', 'M', 'L', 'PAR', 'JG', 'FR']: unid = t
                     if t.replace('.', '').isdigit() and len(t) < 8 and t != num_item: qtd = t
 
-                item_obj = Item(
-                    numero_item=num_item,
-                    descricao=descricao.upper(),
-                    unidade=unid,
-                    quantidade=qtd,
-                    pregao=novo_pregao
-                )
-                db.session.add(item_obj)
+                db.session.add(Item(numero_item=num_item, descricao=descricao.upper(), unidade=unid, quantidade=qtd, pregao=novo_pregao))
                 count += 1
 
         db.session.commit()
-        return jsonify({"sucesso": True, "msg": f"Sucesso! {count} itens importados."})
-
+        origem = "via URL" if url_alvo else "via HTML"
+        return jsonify({"sucesso": True, "msg": f"Sucesso! {count} itens importados ({origem})."})
     except Exception as e:
         db.session.rollback()
-        return jsonify({"sucesso": False, "msg": f"Erro no servidor: {str(e)}"})
+        return jsonify({"sucesso": False, "msg": str(e)})
 
 @app.route('/api/busca', methods=['GET'])
 def busca():
     termo = request.args.get('q', '').upper()
     if not termo: return jsonify([])
-
-    # Busca limitando a 60 resultados para performance
     itens = Item.query.filter(Item.descricao.contains(termo)).limit(60).all()
-    
-    resultados = []
-    for item in itens:
-        resultados.append({
-            "pregao_numero": item.pregao.numero,
-            "uasg": item.pregao.uasg,
-            "item_num": item.numero_item,
-            "descricao": item.descricao,
-            "unidade": item.unidade
-        })
+    res = []
+    for i in itens:
+        res.append({"pregao_numero": i.pregao.numero, "uasg": i.pregao.uasg, "item_num": i.numero_item, "descricao": i.descricao, "unidade": i.unidade})
+    return jsonify(res)
 
-    return jsonify(resultados)
+@app.route('/api/excluir', methods=['POST'])
+def excluir():
+    data = request.get_json()
+    numero = data.get('numero_pregao', '').strip()
+    pregao = Pregao.query.filter_by(numero=numero).first()
+    if pregao:
+        db.session.delete(pregao)
+        db.session.commit()
+        return jsonify({"sucesso": True, "msg": "Pregão excluído."})
+    return jsonify({"sucesso": False, "msg": "Pregão não encontrado."})
+
+# --- NOVAS ROTAS PARA LISTAGEM ---
+
+@app.route('/api/listar', methods=['GET'])
+def listar_pregoes():
+    pregoes = Pregao.query.all()
+    lista = []
+    for p in pregoes:
+        lista.append({
+            "numero": p.numero,
+            "uasg": p.uasg,
+            "data": p.data_importacao,
+            "qtd_itens": len(p.itens)
+        })
+    return jsonify(lista)
+
+@app.route('/api/detalhes', methods=['GET'])
+def detalhes_pregao():
+    numero = request.args.get('numero')
+    pregao = Pregao.query.filter_by(numero=numero).first()
+    if not pregao: return jsonify([])
+    
+    itens = []
+    for i in pregao.itens:
+        itens.append({
+            "item_num": i.numero_item,
+            "descricao": i.descricao,
+            "unidade": i.unidade,
+            "quantidade": i.quantidade
+        })
+    return jsonify(itens)
 
 if __name__ == '__main__':
     app.run(debug=True)
